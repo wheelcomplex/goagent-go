@@ -170,13 +170,12 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 	if err != nil {
 		log.Printf("read lenContent error: %s", err)
 		return nil, err
-	}
-	var _ = lenContent
-
+	}	
 	response := new(http.Response)
 	response.StatusCode = int(status)
 	response.Status = http.StatusText(int(status))
-	// response.TransferEncoding = []string{"chunked"}
+	response.ProtoMajor = 1
+	response.ProtoMinor = 0
 	bHeaderEncoded := make([]byte, lenHeaderEncoded)
 	_, err = io.ReadFull(bodyReader, bHeaderEncoded)
 	if err != nil {
@@ -184,23 +183,28 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 		return nil, err
 	}
 	response.Header = make(http.Header)
-	for _, h := range bytes.Split(bHeaderEncoded, []byte{'&'}) {
-		kv := bytes.SplitN(h, []byte{'='}, 2)
+	for _, h := range strings.Split(string(bHeaderEncoded), "&") {
+		kv := strings.SplitN(h, "=", 2)
 		if len(kv) != 2 {
 			continue
 		}
-		value := make([]byte, hex.DecodedLen(len(kv[1])))
-		_, err := hex.Decode(value, kv[1])
+		value, err := hex.DecodeString(kv[1])
 		if err != nil {
 			log.Printf("decode hex error: %s", err)
 			return nil, err
 		}
-		response.Header.Add(string(bytes.Title(kv[0])), string(value))
-	}
+		if strings.Title(kv[0])=="Set-Cookie" {
+			for _, cookie := range strings.Split(string(value), "\r\nSet-Cookie: ") {
+				response.Header.Add("Set-Cookie", cookie)
+			}
+		} else {
+			response.Header.Add(strings.Title(kv[0]), string(value))
+		}
+	}	
 	bodybuf := new(bytes.Buffer)
 	io.Copy(bodybuf, bodyReader)
 	response.ContentLength = int64(bodybuf.Len())
-	response.Body = ioutil.NopCloser(bodybuf)
+	response.Body = ioutil.NopCloser(bodybuf) //bodyReader
 	return response, nil
 }
 
@@ -228,6 +232,7 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		return err
 	}
 	err = response.Write(w)
+	response.Body.Close()
 	if err != nil {
 		log.Printf("response write error: %s", err)
 		return err
