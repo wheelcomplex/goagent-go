@@ -96,13 +96,13 @@ func (c *conn) serve() {
 	panic("not reach")
 }
 
-func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
-	// fetch request body
+func (c *conn) packRequest(r *http.Request) (*http.Request, error) {
 	defer r.Body.Close()
 	buf := &bytes.Buffer{}
 	zbuf, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
 	if err != nil {
-		return err
+		log.Println("zlib.NewWriterLevel error: %s", err)
+		return nil, err
 	}
 	url := c.url + r.URL.String()
 	urlhex := make([]byte, hex.EncodedLen(len(url)))
@@ -113,87 +113,77 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		fmt.Fprintf(zbuf, "&password=%s", c.ps.password)
 	}
 	fmt.Fprint(zbuf, "&headers=")
-	log.Println(r.Header)
 	for k, v := range r.Header {
 		fmt.Fprint(zbuf, hex.EncodeToString([]byte(fmt.Sprintf("%s:%s\r\n", k, v[0]))))
 	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return err
+		log.Println("read request body error: %s", err)
+		return nil, err
 	}
 	payload := hex.EncodeToString(body)
 	fmt.Fprintf(zbuf, "&payload=%s", payload)
 	zbuf.Close()
-
-	// fetch request
 	req, err := http.NewRequest("POST", c.ps.path, buf)
 	if err != nil {
-		if err != nil {
-			log.Printf("NewRequest error: %s", err)
-		}
-		return err
+		log.Printf("NewRequest error: %s", err)
+		return nil, err
 	}
 	req.Host = c.ps.appid + ".appspot.com"
 	req.URL.Scheme = "http"
+	return req, nil
+}
 
-	// fetch
-	resp, err := c.ps.t.RoundTrip(req)
-	if err != nil {
-		if err != nil {
-			log.Printf("RoundTrip error: %s", err)
-		}
-		return err
-	}
-
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		err := fmt.Errorf("resp status error: %d", resp.StatusCode)
-		log.Printf("%s", err)
-		return err
-	}
-
+func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 	// read response
 	bodyr := bufio.NewReader(resp.Body)
 	compressed, err := bodyr.ReadByte()
 	if err != nil {
 		log.Printf("Read compressed byte error: %s", err)
-		return err
+		return nil, err
 	}
 	var status, lenHeaderEncoded, lenContent uint32
-	var bodyReader io.Reader
+	var bodyReader io.ReadCloser
 	if compressed == '1' {
 		bodyReader, err = zlib.NewReader(bodyr)
 		if err != nil {
 			log.Printf("zlib.NewReader: ", err)
-			return err
+			return nil, err
 		}
-		defer bodyReader.(io.ReadCloser).Close()
 	} else {
-		bodyReader = bodyr
+		bodyReader = ioutil.NopCloser(bodyr)
 	}
+	defer bodyReader.Close()
+
+	// deal with header
 	err = binary.Read(bodyReader, binary.BigEndian, &status)
 	if err != nil {
 		log.Printf("read status error: %s", err)
-		return err
+		return nil, err
 	}
 	err = binary.Read(bodyReader, binary.BigEndian, &lenHeaderEncoded)
 	if err != nil {
 		log.Printf("read lenHeaderEncoded error: %s", err)
-		return err
+		return nil, err
 	}
 	err = binary.Read(bodyReader, binary.BigEndian, &lenContent)
 	if err != nil {
 		log.Printf("read lenContent error: %s", err)
-		return err
+		return nil, err
 	}
 	var _ = lenContent
+
+	response := new(http.Response)
+	response.StatusCode = int(status)
+	response.Status = http.StatusText(int(status))
+	// response.TransferEncoding = []string{"chunked"}
 	bHeaderEncoded := make([]byte, lenHeaderEncoded)
 	_, err = io.ReadFull(bodyReader, bHeaderEncoded)
 	if err != nil {
 		log.Printf("read bHeaderEncoded error: %s", err)
-		return err
+		return nil, err
 	}
-	fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", int(status), http.StatusText(int(status)))
+	response.Header = make(http.Header)
 	for _, h := range bytes.Split(bHeaderEncoded, []byte{'&'}) {
 		kv := bytes.SplitN(h, []byte{'='}, 2)
 		if len(kv) != 2 {
@@ -202,17 +192,44 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		value := make([]byte, hex.DecodedLen(len(kv[1])))
 		_, err := hex.Decode(value, kv[1])
 		if err != nil {
-			log.Printf("%s %s", kv[0], kv[1])
 			log.Printf("decode hex error: %s", err)
-			return err
+			return nil, err
 		}
-		fmt.Fprintf(w, "%s: %s\r\n", bytes.Title(kv[0]), value)
+		response.Header.Add(string(bytes.Title(kv[0])), string(value))
 	}
-	fmt.Fprintf(w, "Content-Length: %d\r\n", int(lenContent))
-	fmt.Fprintf(w, "\r\n")
-	_, err = io.Copy(w, bodyReader)
+	bodybuf := new(bytes.Buffer)
+	io.Copy(bodybuf, bodyReader)
+	response.ContentLength = int64(bodybuf.Len())
+	response.Body = ioutil.NopCloser(bodybuf)
+	return response, nil
+}
+
+func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
+	req, err := c.packRequest(r)
 	if err != nil {
-		log.Printf("copy body error: %s", err)
+		log.Println("pack request error")
+		return err
+	}
+	resp, err := c.ps.t.RoundTrip(req)
+	if err != nil {
+		log.Printf("roundtrip error: %s", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		err := fmt.Errorf("resp status error: %d", resp.StatusCode)
+		log.Printf("%s", err)
+		return err
+	}
+
+	response, err := c.unpackResponse(resp)
+	if err != nil {
+		log.Println("unpack response error")
+		return err
+	}
+	err = response.Write(w)
+	if err != nil {
+		log.Printf("response write error: %s", err)
 		return err
 	}
 	err = w.Flush()
@@ -220,7 +237,7 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		log.Printf("body flush error: %s", err)
 		return err
 	}
-	log.Printf("%s \"%s\" %d", r.Method, url, status)
+	log.Printf("%s \"%s\" %d", r.Method, c.url+r.URL.String(), response.StatusCode)
 	return nil
 }
 
