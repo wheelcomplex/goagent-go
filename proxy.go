@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -99,6 +98,7 @@ func (c *conn) serve() {
 
 func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 	// fetch request body
+	defer r.Body.Close()
 	buf := &bytes.Buffer{}
 	zbuf, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
 	if err != nil {
@@ -113,6 +113,7 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		fmt.Fprintf(zbuf, "&password=%s", c.ps.password)
 	}
 	fmt.Fprint(zbuf, "&headers=")
+	log.Println(r.Header)
 	for k, v := range r.Header {
 		fmt.Fprint(zbuf, hex.EncodeToString([]byte(fmt.Sprintf("%s:%s\r\n", k, v[0]))))
 	}
@@ -120,7 +121,6 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	r.Body.Close()
 	payload := hex.EncodeToString(body)
 	fmt.Fprintf(zbuf, "&payload=%s", payload)
 	zbuf.Close()
@@ -147,7 +147,7 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		err := errors.New("resp status error")
+		err := fmt.Errorf("resp status error: %d", resp.StatusCode)
 		log.Printf("%s", err)
 		return err
 	}
