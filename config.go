@@ -8,11 +8,10 @@ import (
 
 type GAE struct {
 	XMLName        xml.Name `xml:"GAE"`
-	Appid          string   `xml:"APPID"`
+	Appid          []string   `xml:"APPID"`
 	Path           string   `xml:"PATH"`
 	Password       string   `xml:"PASSWORD"`
 	GoogleCNIP     []string `xml:"GOOGLECNIP>IP"`
-	TestGoogleCNIP bool     `xml:"TESTGOOGLECNIP"`
 }
 
 type LISTEN struct {
@@ -35,7 +34,7 @@ type Config struct {
 	LOCAL   LOCAL
 }
 
-var DefaultGAE = GAE{Path: "/fetch.py", Appid: "goagent.go"}
+var DefaultGAE = GAE{Path: "/fetch.py", Appid: nil}
 var DefaultLISTEN = LISTEN{Addr: ":8087"}
 var DefaultConfig = Config{Gae: DefaultGAE, Listen: DefaultLISTEN}
 
@@ -67,8 +66,13 @@ func LoadConfig(filename string, c *Config) error {
 	if err != nil {
 		return err
 	}
-	if c.Gae.Appid == "appid" {
+	if c.Gae.Appid == nil {
 		return errors.New("appid not set")
+	}
+	for _, v := range c.Gae.Appid {
+		if v == "" {
+			return errors.New("invalid gae appid")
+		}
 	}
 	if c.Gae.Path == "" {
 		c.Gae.Path = "/fetch.py"

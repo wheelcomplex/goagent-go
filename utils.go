@@ -5,6 +5,7 @@ import (
 	"log"
 	"path"
 	"runtime"
+	"io"
 )
 
 func paniconerr(err error) {
@@ -36,4 +37,14 @@ func exitonerr(err error) {
 			log.Fatalf("%s\n", err)
 		}
 	}
+}
+
+type closeWrap struct {
+	closer	io.Closer
+	io.ReadCloser
+}
+
+func (wrap *closeWrap) Close() error {
+	wrap.ReadCloser.Close()
+	return wrap.closer.Close()
 }
