@@ -44,19 +44,19 @@ func init() {
 func writeResponse(w io.Writer, resp *http.Response) error {
 	_, err := fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", resp.StatusCode, resp.Status)
 	if err!=nil {
-		return err
+		return fmt.Errorf("writeResponse(send status)>%s", err)
 	}
 	err = resp.Header.Write(w)
 	if err!=nil {
-		return err
+		return fmt.Errorf("writeResponse(send header)>%s", err)
 	}
 	_, err = fmt.Fprintf(w, "\r\n")
 	if err!=nil {
-		return err
+		return fmt.Errorf("writeResponse(send header end)>%s", err)
 	}
 	_, err = io.Copy(w, resp.Body)
 	if err!=nil {
-		return err
+		return fmt.Errorf("writeResponse(send body)>%s", err)
 	}
 	return nil
 }
@@ -111,6 +111,8 @@ func (c *conn) serve() {
 				return
 			} else if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
 				return
+			} else if strings.Contains(err.Error(), "connection reset by peer") {
+				return
 			}
 			log.Printf("conn.serve: %s", err)
 			return
@@ -141,6 +143,9 @@ func (c *conn) serve() {
 		}
 		err = c.handle(c.bw, req)
 		if err != nil {
+			if strings.Contains(err.Error(), "broken pipe") {
+				return
+			}
 			log.Printf("conn.serve>%s", err)
 			return
 		}
@@ -327,21 +332,11 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	first.Header.Del("Content-Range")
 	//first.ContentLength = int64(end - start + 1)
 	first.Header.Set("Content-Length", strconv.Itoa(length))
-	_, err = fmt.Fprintf(w, "HTTP/1.1 200 OK\r\n")
+	first.StatusCode = 200
+	first.Status = http.StatusText(200)
+	err = writeResponse(w, first)
 	if err!=nil {
-		return fmt.Errorf("conn.largefetch(send status)>%s", err)
-	}
-	err = first.Header.Write(w)
-	if err!=nil {
-		return fmt.Errorf("conn.largefetch(send header)>%s", err)
-	}
-	_, err = fmt.Fprintf(w, "\r\n")
-	if err!=nil {
-		return fmt.Errorf("conn.largefetch(send header end)>%s", err)
-	}
-	_, err = io.Copy(w, first.Body)
-	if err!=nil {
-		return fmt.Errorf("conn.largefetch(send body)>%s", err)
+		return fmt.Errorf("conn.largefetch>%s", err)
 	}
 	err = w.Flush()
 	if err!=nil {
