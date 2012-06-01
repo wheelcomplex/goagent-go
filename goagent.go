@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	Version = "v0.3.2"
+	Version = "v0.3.3"
 )
 
 var configFile *string = flag.String("c", "config.xml", "config file")
