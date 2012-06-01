@@ -254,8 +254,6 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 			response.Header.Add(strings.Title(kv[0]), string(value))
 		}
 	}	
-	// bodybuf := new(bytes.Buffer)
-	// io.Copy(bodybuf, bodyReader)
 	response.Header.Set("Content-Length", strconv.Itoa(int(lenContent)))
 	response.Body = bodyReader
 	return response, nil
@@ -308,7 +306,7 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	if first == nil {
 		first, _, pos, length, err = c.rangeRoundTrip(r, 0, 1000000)
 		if err!=nil {
-			return err
+			return fmt.Errorf("conn.largefetch(first roundtrip): %s", err)
 		}
 		defer first.Body.Close()
 	} else {
