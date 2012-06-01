@@ -374,13 +374,16 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 				}
 				seq.Start(uint(n))
 				_, err = io.Copy(w, resp.Body)
+				resp.Body.Close()
 				if err!=nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(send conts body)>%s", err)
+					seq.End(uint(n))
 					return
 				}
 				err = w.Flush()
 				if err!=nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(conts flush)>%s", err)
+					seq.End(uint(n))
 					return
 				}
 				seq.End(uint(n))
