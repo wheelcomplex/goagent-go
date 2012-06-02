@@ -61,6 +61,7 @@ func (s *sequencer) Close() {
 	for _, c := range s.wait {
 		close(c)
 	}
+	s.closed = true
 	s.wait = nil
 	s.mu.Unlock()
 }
