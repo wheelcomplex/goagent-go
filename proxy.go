@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -304,28 +303,34 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	pos := 0
 	length := 0
 	step := 100000
+	log.Printf("largefetch begin: %s", r.URL.Path)
 	var err error
 	if first == nil {
 		first, _, pos, length, err = c.rangeRoundTrip(r, 0, 1000000)
 		if err != nil {
+			r.Body.Close()
 			return fmt.Errorf("conn.largefetch(first roundtrip)>%s", err)
 		}
 		defer first.Body.Close()
 	} else {
 		contentRange := first.Header.Get("Content-Range")
 		if contentRange == "" {
+			r.Body.Close()
 			return errors.New("conn.largefetch: empty content range")
 		}
 		m := rangeresp.FindStringSubmatch(contentRange)
 		if len(m) != 4 {
+			r.Body.Close()
 			return errors.New("conn.largefetch: invalid content range")
 		}
 		pos, err = strconv.Atoi(m[2])
 		if err != nil {
+			r.Body.Close()
 			return fmt.Errorf("conn.largefetch(convert pos)>%s", err)
 		}
 		length, err = strconv.Atoi(m[3])
 		if err != nil {
+			r.Body.Close()
 			return fmt.Errorf("conn.largefetch(convert length)>%s", err)
 		}
 	}
@@ -348,11 +353,9 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	var seq sequencer
 	task := make(chan int)
 	errChan := make(chan error)
-	var threadcount int32
 	for i := 0; i < 30; i++ {
 		go func() {
-			atomic.AddInt32(&threadcount, 1)
-			defer atomic.AddInt32(&threadcount, -1)
+			defer print("end--------")
 			for n := range task {
 				start_in := pos + 1 + step*n
 				end_in := pos + step*(n+1)
@@ -427,24 +430,14 @@ OUT2:
 	}
 	close(errChan)
 	r.Body.Close()
-	if atomic.LoadInt32(&threadcount) != 0 {
-		panic("goroutine leak")
-	}
+	log.Printf("largefetch end: %s", r.URL.Path)
 	return err
 }
 
 func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 	response, err := c.roundTrip(r)
 	if err != nil {
-		if err == errResponse502 && r.Method == "GET" {
-			err = c.largefetch(w, r, nil)
-			if err != nil {
-				return fmt.Errorf("conn.handle>%s", err)
-			}
-			return nil
-		} else {
-			return fmt.Errorf("conn.handle>%s", err)
-		}
+		return fmt.Errorf("conn.handle>%s", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode == 206 {
