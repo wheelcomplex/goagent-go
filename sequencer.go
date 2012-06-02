@@ -7,25 +7,30 @@ import (
 type sequencer struct {
 	mu   sync.Mutex
 	id   uint
-	wait map[uint]chan uint
+	wait map[uint]chan bool
+	closed bool
 }
     	
 // Start waits until it is time for the event numbered id to begin.
 // That is, except for the first event, it waits until End(id-1) has
 // been called.
-func (s *sequencer) Start(id uint) {
+func (s *sequencer) Start(id uint) bool {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
 	if s.id == id {
 		s.mu.Unlock()
-		return
+		return true
 	}
-	c := make(chan uint)
+	c := make(chan bool)
 	if s.wait == nil {
-		s.wait = make(map[uint]chan uint)
+		s.wait = make(map[uint]chan bool)
 	}
 	s.wait[id] = c
 	s.mu.Unlock()
-	<-c
+	return <-c
 }
 
 // End notifies the sequencer that the event numbered id has completed,
@@ -39,7 +44,7 @@ func (s *sequencer) End(id uint) {
 	id++
 	s.id = id
 	if s.wait == nil {
-		s.wait = make(map[uint]chan uint)
+		s.wait = make(map[uint]chan bool)
 	}
 	c, ok := s.wait[id]
 	if ok {
@@ -47,6 +52,15 @@ func (s *sequencer) End(id uint) {
 	}
 	s.mu.Unlock()
 	if ok {
-		c <- 1
+		c <- true
 	}
+}
+
+func (s *sequencer) Close() {
+	s.mu.Lock()
+	for _, c := range s.wait {
+		close(c)
+	}
+	s.wait = nil
+	s.mu.Unlock()
 }

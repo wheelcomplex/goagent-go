@@ -1,6 +1,6 @@
 <GOAGENT>
 	<GAE>
-		<APPID></APPID>
+		<APPID>rqhproxy</APPID>
 		<PATH>/fetch.py</PATH>
 		<PASSWORD></PASSWORD>
 		<GOOGLECNIP>

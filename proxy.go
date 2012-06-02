@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"errors"
+	"sync/atomic"
 )
 
 var (
@@ -346,8 +347,11 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	var seq sequencer
 	task := make(chan int)
 	errChan := make(chan error)
+	var threadcount int32	
 	for i:=0; i < 30; i++ {
 		go func() {
+			atomic.AddInt32(&threadcount, 1)
+			defer atomic.AddInt32(&threadcount, -1)
 			for n:= range task {
 				start_in := pos + 1 + step * n
 				end_in := pos + step * (n+1)
@@ -365,23 +369,27 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 				}
 				if err!=nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine>%s", err)
+					seq.Close()
 					return
 				}
 				if start_out != start_in || end_out != end_in {
 					errChan <- errors.New("conn.largefetch.routine: error range returned")
 				}
-				seq.Start(uint(n))
+				ok := seq.Start(uint(n))
+				if !ok {       // seq closed
+					return
+				}
 				_, err = io.Copy(w, resp.Body)
 				resp.Body.Close()
 				if err!=nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(send conts body)>%s", err)
-					seq.End(uint(n))
+					seq.Close()
 					return
 				}
 				err = w.Flush()
 				if err!=nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(conts flush)>%s", err)
-					seq.End(uint(n))
+					seq.Close()
 					return
 				}
 				seq.End(uint(n))
@@ -418,6 +426,9 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	}
 	close(errChan)
 	r.Body.Close()
+	if atomic.LoadInt32(&threadcount)!=0 {
+		panic("goroutine leak")
+	}
 	return err
 }
 
