@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"path"
 	"runtime"
-	"io"
 )
 
 func paniconerr(err error) {
@@ -40,7 +40,7 @@ func exitonerr(err error) {
 }
 
 type closeWrap struct {
-	closer	io.Closer
+	closer io.Closer
 	io.ReadCloser
 }
 

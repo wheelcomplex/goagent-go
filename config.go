@@ -7,11 +7,11 @@ import (
 )
 
 type GAE struct {
-	XMLName        xml.Name `xml:"GAE"`
-	Appid          []string   `xml:"APPID"`
-	Path           string   `xml:"PATH"`
-	Password       string   `xml:"PASSWORD"`
-	GoogleCNIP     []string `xml:"GOOGLECNIP>IP"`
+	XMLName    xml.Name `xml:"GAE"`
+	Appid      []string `xml:"APPID"`
+	Path       string   `xml:"PATH"`
+	Password   string   `xml:"PASSWORD"`
+	GoogleCNIP []string `xml:"GOOGLECNIP>IP"`
 }
 
 type LISTEN struct {

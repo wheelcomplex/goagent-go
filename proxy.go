@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"errors"
 	"sync/atomic"
 )
 
@@ -27,36 +27,37 @@ var (
 )
 
 var (
-	rangereq *regexp.Regexp
+	rangereq  *regexp.Regexp
 	rangeresp *regexp.Regexp
 )
+
 func init() {
 	var err error
 	rangereq, err = regexp.Compile("bytes=(.*)-(.*)")
-	if err!=nil {
+	if err != nil {
 		panic(err)
 	}
 	rangeresp, err = regexp.Compile("bytes (.*)-(.*)/(.+)")
-	if err!=nil {
+	if err != nil {
 		panic(err)
 	}
 }
 
 func writeResponse(w io.Writer, resp *http.Response) error {
 	_, err := fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", resp.StatusCode, resp.Status)
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("writeResponse(send status)>%s", err)
 	}
 	err = resp.Header.Write(w)
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("writeResponse(send header)>%s", err)
 	}
 	_, err = fmt.Fprintf(w, "\r\n")
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("writeResponse(send header end)>%s", err)
 	}
 	_, err = io.Copy(w, resp.Body)
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("writeResponse(send body)>%s", err)
 	}
 	return nil
@@ -127,14 +128,14 @@ func (c *conn) serve() {
 			}
 			config := &tls.Config{Certificates: []tls.Certificate{*cert}}
 			_, err = c.bw.WriteString("HTTP/1.0 200 OK\r\n\r\n")
-			if err!=nil {
+			if err != nil {
 				log.Printf("conn.serve(write status)>%s", err)
-				return				
+				return
 			}
 			err = c.bw.Flush()
-			if err!=nil {
+			if err != nil {
 				log.Printf("conn.serve(c.bw.Flush)>%s", err)
-				return				
+				return
 			}
 			c.rw = tls.Server(c.rw, config)
 			c.br = bufio.NewReader(c.rw)
@@ -204,9 +205,9 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 			resp.Body.Close()
 			return nil, fmt.Errorf("conn.unpackResponse(zlib.NewReader)>%s", err)
 		}
-		bodyReader = &closeWrap{closer:resp.Body, ReadCloser:bodyReader}
+		bodyReader = &closeWrap{closer: resp.Body, ReadCloser: bodyReader}
 	} else {
-		bodyReader = &closeWrap{closer:resp.Body, ReadCloser:ioutil.NopCloser(bodyr)}
+		bodyReader = &closeWrap{closer: resp.Body, ReadCloser: ioutil.NopCloser(bodyr)}
 	}
 
 	// deal with header
@@ -224,7 +225,7 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 	if err != nil {
 		bodyReader.Close()
 		return nil, fmt.Errorf("conn.unpackResponse(read lenContent)>%s", err)
-	}	
+	}
 	response := new(http.Response)
 	response.StatusCode = int(status)
 	response.Status = http.StatusText(int(status))
@@ -247,14 +248,14 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 			bodyReader.Close()
 			return nil, fmt.Errorf("conn.unpackResponse(hex.DecodeString(kv[1]))>%s", err)
 		}
-		if strings.Title(kv[0])=="Set-Cookie" {
+		if strings.Title(kv[0]) == "Set-Cookie" {
 			for _, cookie := range strings.Split(string(value), "\r\nSet-Cookie: ") {
 				response.Header.Add("Set-Cookie", cookie)
 			}
 		} else {
 			response.Header.Add(strings.Title(kv[0]), string(value))
 		}
-	}	
+	}
 	response.Header.Set("Content-Length", strconv.Itoa(int(lenContent)))
 	response.Body = bodyReader
 	return response, nil
@@ -263,7 +264,7 @@ func (c *conn) unpackResponse(resp *http.Response) (*http.Response, error) {
 func (c *conn) rangeRoundTrip(r *http.Request, start int, end int) (response *http.Response, start_out int, end_out int, length_out int, err error) {
 	r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	response, err = c.roundTrip(r)
-	if err!=nil {
+	if err != nil {
 		err = fmt.Errorf("conn.rangeRoundTrip>%s", err)
 		return
 	}
@@ -282,31 +283,31 @@ func (c *conn) rangeRoundTrip(r *http.Request, start int, end int) (response *ht
 		return
 	}
 	start_out, err = strconv.Atoi(m[1])
-	if err!=nil {
+	if err != nil {
 		err = fmt.Errorf("conn.rangeRoundTrip(convert start)>%s", err)
 		return
 	}
 	end_out, err = strconv.Atoi(m[2])
-	if err!=nil {
+	if err != nil {
 		err = fmt.Errorf("conn.rangeRoundTrip(convert end)>%s", err)
 		return
 	}
 	length_out, err = strconv.Atoi(m[3])
-	if err!=nil {
+	if err != nil {
 		err = fmt.Errorf("conn.rangeRoundTrip(convert length)>%s", err)
-		return 
+		return
 	}
 	return
 }
 
-func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response) (error) {
+func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response) error {
 	pos := 0
 	length := 0
 	step := 100000
 	var err error
 	if first == nil {
 		first, _, pos, length, err = c.rangeRoundTrip(r, 0, 1000000)
-		if err!=nil {
+		if err != nil {
 			return fmt.Errorf("conn.largefetch(first roundtrip): %s", err)
 		}
 		defer first.Body.Close()
@@ -320,13 +321,13 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 			return errors.New("conn.largefetch: invalid content range")
 		}
 		pos, err = strconv.Atoi(m[2])
-		if err!=nil {
+		if err != nil {
 			return fmt.Errorf("conn.largefetch(convert pos)>%s", err)
 		}
 		length, err = strconv.Atoi(m[3])
-		if err!=nil {
+		if err != nil {
 			return fmt.Errorf("conn.largefetch(convert length)>%s", err)
-		}		
+		}
 	}
 	first.Header.Del("Content-Range")
 	//first.ContentLength = int64(end - start + 1)
@@ -334,40 +335,40 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 	first.StatusCode = 200
 	first.Status = http.StatusText(200)
 	err = writeResponse(w, first)
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("conn.largefetch>%s", err)
 	}
 	err = w.Flush()
-	if err!=nil {
+	if err != nil {
 		return fmt.Errorf("conn.largefetch(w.Flush)>%s", err)
 	}
-	if length - pos - 1 == 0 {
+	if length-pos-1 == 0 {
 		return nil
 	}
 	var seq sequencer
 	task := make(chan int)
 	errChan := make(chan error)
-	var threadcount int32	
-	for i:=0; i < 30; i++ {
+	var threadcount int32
+	for i := 0; i < 30; i++ {
 		go func() {
 			atomic.AddInt32(&threadcount, 1)
 			defer atomic.AddInt32(&threadcount, -1)
-			for n:= range task {
-				start_in := pos + 1 + step * n
-				end_in := pos + step * (n+1)
-				if end_in > length - 1  {
+			for n := range task {
+				start_in := pos + 1 + step*n
+				end_in := pos + step*(n+1)
+				if end_in > length-1 {
 					end_in = length - 1
 				}
 				var start_out, end_out int
 				var resp *http.Response
 				var err error
-				for i:=0; i<3; i++ {
+				for i := 0; i < 3; i++ {
 					resp, start_out, end_out, _, err = c.rangeRoundTrip(r, start_in, end_in)
-					if err==nil {
+					if err == nil {
 						break
 					}
 				}
-				if err!=nil {
+				if err != nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine>%s", err)
 					seq.Close()
 					return
@@ -376,18 +377,18 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 					errChan <- errors.New("conn.largefetch.routine: error range returned")
 				}
 				ok := seq.Start(uint(n))
-				if !ok {       // seq closed
+				if !ok { // seq closed
 					return
 				}
 				_, err = io.Copy(w, resp.Body)
 				resp.Body.Close()
-				if err!=nil {
+				if err != nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(send conts body)>%s", err)
 					seq.Close()
 					return
 				}
 				err = w.Flush()
-				if err!=nil {
+				if err != nil {
 					errChan <- fmt.Errorf("conn.largefetch.routine(conts flush)>%s", err)
 					seq.Close()
 					return
@@ -398,35 +399,35 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 		}()
 	}
 	var nTask int
-	OUT2:
-	for i:=0; i < (length - pos - 2) / step +1; i++ {
-		OUT1:
+OUT2:
+	for i := 0; i < (length-pos-2)/step+1; i++ {
+	OUT1:
 		for {
 			select {
-			case task<-i:
-				nTask ++
+			case task <- i:
+				nTask++
 				break OUT1
 			case err0 := <-errChan:
-				if err0!=nil {
+				if err0 != nil {
 					err = fmt.Errorf("largefetch>%s", err0)
 					close(task)
 					nTask--
-					break OUT2					
+					break OUT2
 				}
-				nTask--		
+				nTask--
 			}
 		}
 	}
-	for nTask>0 {
+	for nTask > 0 {
 		err0 := <-errChan
-		if err0!=nil && err==nil {
+		if err0 != nil && err == nil {
 			err = fmt.Errorf("largefetch>%s", err0)
 		}
 		nTask--
 	}
 	close(errChan)
 	r.Body.Close()
-	if atomic.LoadInt32(&threadcount)!=0 {
+	if atomic.LoadInt32(&threadcount) != 0 {
 		panic("goroutine leak")
 	}
 	return err
@@ -434,10 +435,10 @@ func (c *conn) largefetch(w *bufio.Writer, r *http.Request, first *http.Response
 
 func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 	response, err := c.roundTrip(r)
-	if err!=nil {
+	if err != nil {
 		if err == errResponse502 && r.Method == "GET" {
 			err = c.largefetch(w, r, nil)
-			if err!=nil {
+			if err != nil {
 				return fmt.Errorf("conn.handle>%s", err)
 			}
 			return nil
@@ -446,7 +447,7 @@ func (c *conn) handle(w *bufio.Writer, r *http.Request) error {
 		}
 	}
 	defer response.Body.Close()
-	if response.StatusCode==206 {
+	if response.StatusCode == 206 {
 		return c.largefetch(w, r, response)
 	}
 	r.Body.Close()

@@ -5,12 +5,12 @@ import (
 )
 
 type sequencer struct {
-	mu   sync.Mutex
-	id   uint
-	wait map[uint]chan bool
+	mu     sync.Mutex
+	id     uint
+	wait   map[uint]chan bool
 	closed bool
 }
-    	
+
 // Start waits until it is time for the event numbered id to begin.
 // That is, except for the first event, it waits until End(id-1) has
 // been called.
